@@ -1,0 +1,58 @@
+name: Deploy to AWS ECS
+
+on:
+  push:
+    branches:
+      - main  # Runs on push to main branch
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  ECS_CLUSTER: test-application
+  ECS_SERVICE: node-app-service
+  ECS_TASK_DEFINITION: .github/workflows/task-definition.json
+
+jobs:
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPOSITORY
+
+      - name: Build, Tag, and Push Docker Image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Update ECS Task Definition
+        id: task-def
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          jq '.containerDefinitions[0].image = "'$ECR_REPOSITORY':'$IMAGE_TAG'"' $ECS_TASK_DEFINITION > task-def-updated.json
+
+      - name: Register New Task Definition
+        id: register-task
+        run: |
+          TASK_REVISION=$(aws ecs register-task-definition --cli-input-json file://task-def-updated.json | jq '.taskDefinition.revision')
+          echo "TASK_REVISION=$TASK_REVISION" >> $GITHUB_ENV
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition node-app-backend:$TASK_REVISION --force-new-deployment
