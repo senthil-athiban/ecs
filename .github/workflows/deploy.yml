@@ -55,4 +55,5 @@ jobs:
 
       - name: Deploy to ECS
         run: |
+          TASK_REVISION=$(aws ecs register-task-definition --cli-input-json file://task-def-updated.json | jq '.taskDefinition.revision')
           aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition node-app-backend:$TASK_REVISION --force-new-deployment
